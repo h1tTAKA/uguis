@@ -1,13 +1,20 @@
 #!/bin/bash
-# uguis uninstaller — removes files and the Stop hook entry from settings.json.
+# uguis uninstaller — stops the daemon, removes files and any Stop hook entry.
 set -euo pipefail
 CLAUDE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
+# stop + remove the launchd daemon
+PLIST="$HOME/Library/LaunchAgents/com.uguis.tts.plist"
+launchctl unload "$PLIST" 2>/dev/null || true
+pkill -f tts-daemon.py 2>/dev/null || true
+rm -f "$PLIST"
+
 rm -f "$CLAUDE/hooks/tts-speak.py" \
+      "$CLAUDE/hooks/tts-daemon.py" \
       "$CLAUDE/scripts/tts-toggle.sh" \
-      "$CLAUDE/.tts-off"
+      "$CLAUDE/.tts-off" "$CLAUDE/.tts-daemon.log"
 rm -rf "$CLAUDE/skills/uguis"
-rm -f "$CLAUDE"/.tts-last-* 2>/dev/null || true
+rm -f "$CLAUDE"/.tts-last-* "$CLAUDE"/.tts-daemon-* 2>/dev/null || true
 
 python3 - "$CLAUDE" <<'PY'
 import json, os, sys

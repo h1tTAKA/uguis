@@ -27,9 +27,9 @@ OFF_FLAG = os.path.join(HOME, ".claude", ".tts-off")
 # engine: "edge" (Microsoft neural, natural, needs net) or "say" (macOS offline)
 ENGINE = os.environ.get("TTS_ENGINE", "edge")
 EDGE_VOICE = os.environ.get("TTS_EDGE_VOICE", "ko-KR-SunHiNeural")
-EDGE_RATE = os.environ.get("TTS_EDGE_RATE", "+60%")
+EDGE_RATE = os.environ.get("TTS_EDGE_RATE", "+90%")
 # faster rate for intermediate progress narration (non-final, non-question)
-EDGE_RATE_FAST = os.environ.get("TTS_EDGE_RATE_FAST", "+100%")
+EDGE_RATE_FAST = os.environ.get("TTS_EDGE_RATE_FAST", "+90%")
 VOLUME = os.environ.get("TTS_VOLUME", "0.6")   # afplay gain: 1.0 = normal
 VOICE = os.environ.get("TTS_VOICE", "Yuna")   # say fallback voice
 RATE = os.environ.get("TTS_RATE", "210")       # say fallback rate (wpm)
@@ -198,7 +198,9 @@ def clean(t):
         if code_score(c) >= CODE_MAX:
             continue  # code chunk -> omit
         kept.append(strip_prose_code(c).strip())
-    t = ", ".join(k for k in kept if k)
+    # join clauses with a plain space (no comma) so the neural voice does not
+    # insert a pause at every clause boundary. TTS_JOIN=", " restores pauses.
+    t = JOIN.join(k for k in kept if k)
 
     t = re.sub(r"[*_#>`~|]", "", t)
     t = re.sub(r"[ \t]+", " ", t)
@@ -281,22 +283,30 @@ def find_edge():
 _END = object()   # queue sentinel
 
 
+FIRST_CHUNK = int(os.environ.get("TTS_FIRST_CHUNK", "15"))
+# how kept clauses are joined; " " = no pause, ", " = short pause between them
+JOIN = os.environ.get("TTS_JOIN", " ")
+
+
 def chunk_text(s):
-    """Split into chunks (~<=200 chars) at comma/sentence boundaries for
-    pipelined synthesis. Fewer/larger chunks = fewer audible seams."""
+    """Split into chunks at comma/sentence boundaries for pipelined synthesis.
+    The FIRST chunk is kept small (~FIRST_CHUNK chars) so the first audio comes
+    back fast; later chunks grow to ~200 for fewer audible seams."""
     parts = re.split(r"(?<=[.!?。…,])\s+", s.strip())
     chunks, buf = [], ""
+    limit = FIRST_CHUNK
     for p in parts:
         p = p.strip()
         if not p:
             continue
         if not buf:
             buf = p
-        elif len(buf) + len(p) < 200:
+        elif len(buf) + len(p) < limit:
             buf += " " + p
         else:
             chunks.append(buf)
             buf = p
+            limit = 200          # only the first chunk is small
     if buf:
         chunks.append(buf)
     return chunks or [s]

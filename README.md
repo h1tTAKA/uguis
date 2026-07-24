@@ -2,10 +2,10 @@
 
 Make **Claude Code speak its answers out loud** in a natural voice, on macOS.
 
-`uguis` (うぐいす / 꾀꼬리, the Japanese bush warbler) is a Claude Code `Stop`
-hook: when Claude finishes a turn, it reads the last message aloud using
-Microsoft Edge neural TTS — skipping code blocks, stripping markdown, and
-streaming audio chunk-by-chunk so it starts talking almost immediately.
+`uguis` (うぐいす / 꾀꼬리, the Japanese bush warbler) is a small background
+daemon that tails Claude Code's active transcript and reads new assistant
+output aloud in real time using Microsoft Edge neural TTS — skipping code
+blocks, stripping markdown, and voicing each event the moment it's written.
 
 Default voice is Korean (`ko-KR-SunHiNeural`), but it works in any language
 Edge TTS supports (English, Japanese, …) via one env var.
@@ -13,24 +13,22 @@ Edge TTS supports (English, Japanese, …) via one env var.
 ## Features
 
 - **Natural neural voice** (Edge TTS), not the robotic macOS `say`.
+- **Real-time, event by event**: a background daemon tails the transcript and
+  speaks each assistant event as it's written — progress narration, the final
+  answer, and **AskUserQuestion prompts + option labels** (voiced the instant
+  the question appears, which no Stop hook can do).
 - **Code-aware**: dense code clauses are dropped; a stray method name in prose
-  is read by name only (args stripped). Code blocks, backticks, URLs, emoji,
-  and markdown are always removed.
-- **Whole turn, in order**: intermediate progress narration (the lines shown
-  between tool calls) and **AskUserQuestion prompts + option labels** are voiced
-  too — not just the final message. Progress is spoken faster
-  (`TTS_EDGE_RATE_FAST`) since it's just status; the final answer and questions
-  stay at normal speed.
-- **Streaming-ish**: the answer is split into ~200-char chunks; the first chunk
-  plays while later chunks synthesize in the background.
-- **Non-blocking**: the hook returns instantly (~0.08s) and a detached worker
-  handles playback, so your prompt is never held up.
-- **Toggle on/off** any time — no restart, no settings edit.
+  is read by name only. Code blocks, backticks, URLs, emoji, markdown removed.
+- **Stays in sync**: when it falls behind (lots of fast tool calls), stale
+  progress is skipped so playback jumps to the latest — never a long backlog.
+- **Fast first audio**: the first chunk is kept tiny (`TTS_FIRST_CHUNK`) and
+  later chunks synthesize while the current one plays (no gaps).
+- **Toggle on/off** any time — no restart. Daemon `start/stop` via one script.
 - **Offline fallback**: if Edge/network fails, falls back to macOS `say`.
 
 ## Requirements
 
-- macOS (uses `afplay` + `say`)
+- macOS (uses `afplay` + `say`, `launchd`)
 - `python3` (ships with macOS)
 - [`edge-tts`](https://github.com/rany2/edge-tts) — installed automatically via
   `pipx` (needs internet at runtime). Without it, uses the offline `say` voice.
@@ -43,12 +41,10 @@ cd uguis
 bash install.sh
 ```
 
-Then restart Claude Code (or open a new session). That's it.
-
-The installer copies files into `~/.claude/`, installs `edge-tts` if missing,
-and adds the `Stop` hook to `~/.claude/settings.json` (backed up to
-`settings.json.bak-uguis`, existing hooks preserved). Respects
-`$CLAUDE_CONFIG_DIR` if you set it.
+The daemon starts immediately — no Claude Code restart needed. The installer
+copies files into `~/.claude/`, installs `edge-tts` if missing, removes any old
+Stop hook, and registers a `launchd` agent (`com.uguis.tts`) that runs at login
+and restarts if it dies. Respects `$CLAUDE_CONFIG_DIR`.
 
 ## Usage
 
@@ -59,26 +55,31 @@ Toggle with the skill (just talk to Claude):
 Or directly:
 
 ```bash
-bash ~/.claude/scripts/tts-toggle.sh off      # mute
-bash ~/.claude/scripts/tts-toggle.sh on       # unmute
-bash ~/.claude/scripts/tts-toggle.sh status
+bash ~/.claude/scripts/tts-toggle.sh off       # mute (daemon keeps running)
+bash ~/.claude/scripts/tts-toggle.sh on        # unmute
+bash ~/.claude/scripts/tts-toggle.sh status    # mute state + daemon alive?
+bash ~/.claude/scripts/tts-toggle.sh stop      # stop the daemon
+bash ~/.claude/scripts/tts-toggle.sh start     # start it
 ```
 
 Instant mute without the script: `touch ~/.claude/.tts-off` (delete to unmute).
 
 ## Configuration
 
-Set env vars on the hook command in `~/.claude/settings.json`
-(`"command": "TTS_EDGE_VOICE=en-US-AvaMultilingualNeural python3 '.../tts-speak.py'"`):
+Env vars (set them on the `launchd` plist, or export before `start`):
 
 | Var | Default | Meaning |
 |---|---|---|
 | `TTS_ENGINE` | `edge` | `say` = offline macOS voice |
 | `TTS_EDGE_VOICE` | `ko-KR-SunHiNeural` | any Edge voice (e.g. `en-US-AvaMultilingualNeural`) |
-| `TTS_EDGE_RATE` | `+60%` | speaking rate (final answer + questions) |
-| `TTS_EDGE_RATE_FAST` | `+100%` | speaking rate for intermediate progress narration |
+| `TTS_EDGE_RATE` | `+100%` | speaking rate (final answer + questions) |
+| `TTS_EDGE_RATE_FAST` | `+100%` | speaking rate for intermediate progress |
+| `TTS_FIRST_CHUNK` | `15` | first-chunk size in chars (smaller = faster first audio) |
+| `TTS_JOIN` | `" "` | clause joiner; `", "` restores pauses between clauses |
+| `TTS_DAEMON_POLL` | `0.1` | transcript poll interval (s) |
+| `TTS_DAEMON_TIMEOUT` | `0.3` | wait (s) before a still-streaming line is treated as final |
 | `TTS_VOLUME` | `0.6` | afplay gain (1.0 = normal) |
-| `TTS_MAX` | `1000` | max chars (truncates beyond) |
+| `TTS_MAX` | `1000` | max chars per batch (truncates beyond) |
 | `TTS_CODE_MAX` | `3` | clauses with ≥ this many code tokens are dropped |
 | `TTS_VOICE` / `TTS_RATE` | `Yuna` / `210` | macOS `say` fallback voice/rate |
 
@@ -86,23 +87,27 @@ List Edge voices: `edge-tts --list-voices`.
 
 ## How it works
 
-`Stop` is the earliest hook Claude Code fires, so audio starts after the turn
-completes (no true token-level streaming — Claude Code has no streaming hook).
-At `Stop` the current turn may not be flushed to the transcript yet, so the
-worker records the last-spoken timestamp per transcript and polls (~6s max)
-until a genuinely newer assistant turn appears — preventing both double-play
-and replaying the previous turn.
+Claude Code has no hook that fires while an `AskUserQuestion` is on screen (the
+turn is suspended waiting for the answer), and the `Stop` hook only fires at
+turn end — so a hook can't voice questions and tends to dump a whole exchange
+at once. Instead, `tts-daemon.py` tails the most-recently-modified transcript
+under `~/.claude/projects` and, each poll, speaks assistant events newer than
+the last one spoken:
 
-A turn spans several assistant events (progress text, tool calls, a final
-answer, an AskUserQuestion) interleaved with tool-result events. The worker
-walks back from the end collecting assistant events until the real user prompt
-(tool-result events are crossed, not treated as the boundary), then speaks each
-segment in order at its rate.
+- **Rate by lookahead**: text followed by more work = progress (fast); text
+  ending the turn = final; `AskUserQuestion` = voiced immediately.
+- **Catch-up**: within a batch, stale progress that has a later segment is
+  dropped, so playback stays near real time.
+- **Baseline on start**: a freshly seen transcript is marked as already spoken,
+  so the daemon never replays history.
+
+Synthesis/clean/chunk helpers are reused from `tts-speak.py` (kept as a library;
+the Stop hook is no longer registered).
 
 ## Uninstall
 
 ```bash
-bash uninstall.sh
+bash uninstall.sh   # stops + removes the daemon, files, and any Stop hook
 ```
 
 ## License
