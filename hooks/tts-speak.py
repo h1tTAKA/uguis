@@ -55,6 +55,26 @@ def _is_user_prompt(ev):
     return True
 
 
+def question_to_text(inp):
+    """Turn an AskUserQuestion tool input into speakable prose:
+    the question body plus its option labels (descriptions omitted — too long
+    and often code-heavy)."""
+    out = []
+    for q in inp.get("questions", []):
+        if not isinstance(q, dict):
+            continue
+        body = (q.get("question") or "").strip()
+        labels = [o.get("label", "").strip()
+                  for o in q.get("options", []) if isinstance(o, dict)]
+        labels = [l for l in labels if l]
+        piece = "질문. " + body if body else ""
+        if labels:
+            piece += (". " if piece else "") + "선택지, " + ", ".join(labels)
+        if piece:
+            out.append(piece)
+    return ". ".join(out)
+
+
 def collect_turn(path):
     """Return (segments, turn_max_ts) for the newest assistant turn.
 
@@ -98,10 +118,16 @@ def collect_turn(path):
         if isinstance(content, str):
             content = [{"type": "text", "text": content}]
         for b in content:
-            if isinstance(b, dict) and b.get("type") == "text":
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "text":
                 txt = b.get("text", "").strip()
                 if txt:
                     segments.append((txt, EDGE_RATE))
+            elif b.get("type") == "tool_use" and b.get("name") == "AskUserQuestion":
+                q = question_to_text(b.get("input", {}))
+                if q:
+                    segments.append((q, EDGE_RATE))
     return segments, max_ts
 
 
