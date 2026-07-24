@@ -25,7 +25,7 @@ PROJECTS = os.path.join(CLAUDE, "projects")
 POLL = float(os.environ.get("TTS_DAEMON_POLL", "0.3"))   # seconds between checks
 # how long a still-streaming final text must be stable before we voice it at
 # normal rate (can't tell "final" from "progress" until work stops following)
-PENDING_TIMEOUT = float(os.environ.get("TTS_DAEMON_TIMEOUT", "2.0"))
+PENDING_TIMEOUT = float(os.environ.get("TTS_DAEMON_TIMEOUT", "1.0"))
 
 _pending_since = {}   # transcript path -> (ts, wallclock first seen)
 
@@ -176,25 +176,35 @@ def speak_new_events(tp):
         write_state(tp, max(all_events[i].get("timestamp", "") for i in a_idx))
         return
     n = len(all_events)
+    # collect this poll's new events (in order) as flat (text, rate) segments
+    flat, last_ts = [], None
     for i in a_idx:
         ev = all_events[i]
         ts = ev.get("timestamp", "")
         if not ts or ts <= last:
             continue
-        if off():
-            return
         blocks = ev.get("message", {}).get("content", [])
         has_q = isinstance(blocks, list) and any(
             isinstance(b, dict) and b.get("name") == "AskUserQuestion" for b in blocks)
-        # newest line with no follower: still streaming -> wait unless it's a
-        # question (nothing follows a question until the user answers).
+        # newest line with no follower: still streaming -> stop here and wait
+        # unless it's a question (nothing follows a question until answered).
         if i == n - 1 and not has_q and not _stable_long_enough(tp, ts):
+            break
+        flat.extend(_event_segments(ev, all_events, i))
+        last_ts = ts
+    if not flat:
+        return
+    # catch-up: if we're behind, drop stale progress (fast) that has a later
+    # segment; always keep final answers / questions (normal rate). Keeps
+    # playback near real time instead of trailing a backlog.
+    plan = [(t, r) for k, (t, r) in enumerate(flat)
+            if not (r == tts.EDGE_RATE_FAST and k < len(flat) - 1)]
+    for txt, rate in plan:
+        if off():
             return
-        for txt, rate in _event_segments(ev, all_events, i):
-            if off():
-                return
-            play_segment(txt, rate, off)
-        write_state(tp, ts)
+        play_segment(txt, rate, off)
+    if last_ts:
+        write_state(tp, last_ts)
 
 
 def main():
