@@ -251,7 +251,10 @@ def worker(path):
         if not s:
             continue
         if total + len(s) > MAX_CHARS:
-            s = s[:max(0, MAX_CHARS - total)].rsplit(" ", 1)[0] + " ..."
+            head = s[:max(0, MAX_CHARS - total - 4)]   # leave room for " ..."
+            if " " in head:
+                head = head.rsplit(" ", 1)[0]
+            s = (head + " ...").strip()
         spoken.append((s, rate))
         total += len(s)
         if total >= MAX_CHARS:
