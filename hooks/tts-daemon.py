@@ -15,7 +15,6 @@ import importlib.util
 import json
 import os
 import subprocess
-import tempfile
 import time
 
 HOME = os.path.expanduser("~")
@@ -82,37 +81,6 @@ def write_state(tp, ts):
             f.write(ts)
     except Exception:
         pass
-
-
-def _rm(p):
-    try:
-        os.remove(p)
-    except OSError:
-        pass
-
-
-def play_segment(text, rate, should_stop):
-    """Clean + chunk + synthesize + play one segment; abort between chunks if
-    should_stop() becomes true (tts turned off / superseded)."""
-    speech = tts.clean(text)
-    if not speech:
-        return
-    if len(speech) > tts.MAX_CHARS:
-        speech = speech[:tts.MAX_CHARS].rsplit(" ", 1)[0] + " ..."
-    edge = tts.find_edge()
-    for ch in tts.chunk_text(speech):
-        if should_stop():
-            return
-        mp3 = tempfile.mktemp(suffix=".mp3", prefix="ttsd_")
-        if edge and tts.synth_chunk(edge, ch, mp3, rate):
-            if should_stop():
-                _rm(mp3)
-                return
-            subprocess.run(["afplay", "-v", tts.VOLUME, mp3])
-            _rm(mp3)
-        else:
-            subprocess.run(["say", "-v", tts.VOICE, "-r", tts.RATE, ch],
-                           stdout=_DEVNULL, stderr=_DEVNULL)
 
 
 def _has_more_work_after(all_events, i):
@@ -199,10 +167,28 @@ def speak_new_events(tp):
     # playback near real time instead of trailing a backlog.
     plan = [(t, r) for k, (t, r) in enumerate(flat)
             if not (r == tts.EDGE_RATE_FAST and k < len(flat) - 1)]
+    # clean + cap, then hand to the prefetch pipeline (synthesize next chunk
+    # while the current one plays -> no gaps between chunks).
+    cleaned, total = [], 0
     for txt, rate in plan:
-        if off():
-            return
-        play_segment(txt, rate, off)
+        s = tts.clean(txt)
+        if not s:
+            continue
+        if total + len(s) > tts.MAX_CHARS:
+            s = s[:max(0, tts.MAX_CHARS - total - 4)]
+            s = (s.rsplit(" ", 1)[0] if " " in s else s) + " ..."
+        cleaned.append((s, rate))
+        total += len(s)
+        if total >= tts.MAX_CHARS:
+            break
+    if not cleaned or off():
+        return
+    if not tts.speak_edge(cleaned, tp, last_ts or ""):   # edge pipeline
+        for s, rate in cleaned:                          # offline say fallback
+            if off():
+                break
+            subprocess.run(["say", "-v", tts.VOICE, "-r", tts.RATE, s],
+                           stdout=_DEVNULL, stderr=_DEVNULL)
     if last_ts:
         write_state(tp, last_ts)
 
