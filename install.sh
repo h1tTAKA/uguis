@@ -1,7 +1,7 @@
 #!/bin/bash
-# uguis installer — Claude Code TTS voice-output hook.
-# Copies files into ~/.claude, installs edge-tts, and registers the Stop hook
-# in settings.json (backing it up first, without clobbering existing hooks).
+# uguis installer — Claude Code TTS voice output via a background daemon.
+# Copies files into ~/.claude, installs edge-tts, removes the old Stop hook,
+# and registers a launchd agent that tails the active transcript.
 set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,7 +11,8 @@ echo "==> Installing uguis into $CLAUDE"
 
 # 1. files
 mkdir -p "$CLAUDE/hooks" "$CLAUDE/scripts" "$CLAUDE/skills/uguis"
-cp "$SRC/hooks/tts-speak.py"        "$CLAUDE/hooks/"
+cp "$SRC/hooks/tts-speak.py"        "$CLAUDE/hooks/"   # shared synth helpers
+cp "$SRC/hooks/tts-daemon.py"       "$CLAUDE/hooks/"
 cp "$SRC/scripts/tts-toggle.sh"     "$CLAUDE/scripts/"
 cp "$SRC/skills/uguis/SKILL.md"     "$CLAUDE/skills/uguis/"
 chmod +x "$CLAUDE/scripts/tts-toggle.sh"
@@ -27,33 +28,35 @@ if ! command -v edge-tts >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/edge-tts" ]
   fi
 fi
 
-# 3. register Stop hook in settings.json (merge, don't overwrite)
+# 3. remove any old Stop hook (the daemon replaces it; avoids double-voicing)
 python3 - "$CLAUDE" <<'PY'
 import json, os, sys
-claude = sys.argv[1]
-sp = os.path.join(claude, "settings.json")
-cmd = "python3 '%s'" % os.path.join(claude, "hooks", "tts-speak.py")
-entry = {"type": "command", "command": cmd, "timeout": 5}
-
-cfg = {}
+sp = os.path.join(sys.argv[1], "settings.json")
 if os.path.exists(sp):
-    with open(sp) as f:
-        try: cfg = json.load(f)
-        except Exception: cfg = {}
-    open(sp + ".bak-uguis", "w").write(json.dumps(cfg, indent=2, ensure_ascii=False))
-
-hooks = cfg.setdefault("hooks", {})
-stop = hooks.setdefault("Stop", [])
-# already installed?
-if any(cmd in json.dumps(g) for g in stop):
-    print("==> Stop hook already registered, skipping")
-else:
-    stop.append({"hooks": [entry]})
-    with open(sp, "w") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
-    print("==> Registered Stop hook in", sp)
+    try: cfg = json.load(open(sp))
+    except Exception: cfg = {}
+    stop = cfg.get("hooks", {}).get("Stop", [])
+    kept = [g for g in stop if "tts-speak.py" not in json.dumps(g)]
+    if len(kept) != len(stop):
+        open(sp + ".bak-uguis", "w").write(json.dumps(cfg, indent=2, ensure_ascii=False))
+        if kept: cfg["hooks"]["Stop"] = kept
+        else: cfg.get("hooks", {}).pop("Stop", None)
+        json.dump(cfg, open(sp, "w"), indent=2, ensure_ascii=False)
+        print("==> Removed old Stop hook from", sp)
 PY
 
+# 4. launchd agent: fill the plist template with real paths, load it
+PY_BIN="$(command -v python3)"
+PLIST="$HOME/Library/LaunchAgents/com.uguis.tts.plist"
+mkdir -p "$HOME/Library/LaunchAgents"
+sed -e "s#__PYTHON__#$PY_BIN#" \
+    -e "s#__DAEMON__#$CLAUDE/hooks/tts-daemon.py#" \
+    -e "s#__HOME__#$HOME#" \
+    "$SRC/com.uguis.tts.plist" > "$PLIST"
+launchctl unload "$PLIST" 2>/dev/null || true
+launchctl load -w "$PLIST"
+echo "==> Loaded launchd agent com.uguis.tts"
+
 echo
-echo "Done. Restart Claude Code (or start a new session) so it picks up the hook + skill."
-echo "Toggle:  bash $CLAUDE/scripts/tts-toggle.sh {on|off|status}   or say '/uguis'"
+echo "Done. The daemon is running now — no Claude Code restart needed."
+echo "Toggle:  bash $CLAUDE/scripts/tts-toggle.sh {on|off|status|start|stop}   or say '/uguis'"
