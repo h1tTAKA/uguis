@@ -36,7 +36,8 @@ bash ~/.claude/scripts/tts-toggle.sh status   # 현재 상태
 - 엔진: 기본 `edge`(Microsoft 뉴럴 TTS, 자연스러움, 인터넷 필요). 답변을 문장 청크로 나눠 **첫 청크부터 재생 시작 + 뒷청크는 재생 중 미리 합성**(스트리밍 유사). 오프라인/실패 시 macOS `say`로 자동 폴백.
 - 커스터마이즈는 `settings.json`의 tts 훅 커맨드에 환경변수로:
   - `TTS_ENGINE`(기본 `edge`; `say`로 두면 오프라인 macOS 음성)
-  - `TTS_EDGE_VOICE`(기본 `ko-KR-SunHiNeural`) · `TTS_EDGE_RATE`(기본 `+60%`) · `TTS_VOLUME`(afplay 게인, 기본 `0.6`, 1.0=기본)
+  - `TTS_EDGE_VOICE`(기본 `ko-KR-SunHiNeural`) · `TTS_EDGE_RATE`(기본 `+60%`, 최종답변·질문 속도) · `TTS_EDGE_RATE_FAST`(기본 `+100%`, 중간 진행상태 속도) · `TTS_VOLUME`(afplay 게인, 기본 `0.6`, 1.0=기본)
   - `TTS_VOICE`/`TTS_RATE` = say 폴백용(기본 Yuna/210) · `TTS_MAX`(기본 1000자) · `TTS_CODE_MAX`(기본 3)
+- 읽는 범위: 한 턴의 클로드 발언 전체(중간 진행상태 + 최종답변 + `AskUserQuestion` 질문·선택지 라벨)를 순서대로 읽는다. 중간 진행상태는 `TTS_EDGE_RATE_FAST`로 더 빠르게, 최종답변·질문은 `TTS_EDGE_RATE`로 보통 속도.
 - 진짜 토큰 단위 실시간 스트리밍은 불가(Claude Code 훅에 스트리밍 트리거 없음; `Stop`이 가장 이른 신호). 청크 파이프라인이 최선의 근사.
 - 코드 필터: 답변을 절 단위로 나눠 **코드 토큰이 `TTS_CODE_MAX`개 이상 뭉친 절은 통째로 음성에서 생략**하고, 프로즈에 메소드명 1~2개만 섞인 절은 인자 `(...)`만 벗겨 이름만 읽는다. 숫자를 낮추면 더 공격적으로 코드를 생략, 높이면 더 많이 읽는다. 코드블록·백틱·URL·이모지·마크다운은 항상 제거.
