@@ -281,22 +281,28 @@ def find_edge():
 _END = object()   # queue sentinel
 
 
+FIRST_CHUNK = int(os.environ.get("TTS_FIRST_CHUNK", "60"))
+
+
 def chunk_text(s):
-    """Split into chunks (~<=200 chars) at comma/sentence boundaries for
-    pipelined synthesis. Fewer/larger chunks = fewer audible seams."""
+    """Split into chunks at comma/sentence boundaries for pipelined synthesis.
+    The FIRST chunk is kept small (~FIRST_CHUNK chars) so the first audio comes
+    back fast; later chunks grow to ~200 for fewer audible seams."""
     parts = re.split(r"(?<=[.!?。…,])\s+", s.strip())
     chunks, buf = [], ""
+    limit = FIRST_CHUNK
     for p in parts:
         p = p.strip()
         if not p:
             continue
         if not buf:
             buf = p
-        elif len(buf) + len(p) < 200:
+        elif len(buf) + len(p) < limit:
             buf += " " + p
         else:
             chunks.append(buf)
             buf = p
+            limit = 200          # only the first chunk is small
     if buf:
         chunks.append(buf)
     return chunks or [s]

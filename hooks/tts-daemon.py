@@ -21,10 +21,10 @@ HOME = os.path.expanduser("~")
 CLAUDE = os.path.join(HOME, ".claude")
 OFF_FLAG = os.path.join(CLAUDE, ".tts-off")
 PROJECTS = os.path.join(CLAUDE, "projects")
-POLL = float(os.environ.get("TTS_DAEMON_POLL", "0.3"))   # seconds between checks
+POLL = float(os.environ.get("TTS_DAEMON_POLL", "0.15"))   # seconds between checks
 # how long a still-streaming final text must be stable before we voice it at
 # normal rate (can't tell "final" from "progress" until work stops following)
-PENDING_TIMEOUT = float(os.environ.get("TTS_DAEMON_TIMEOUT", "1.0"))
+PENDING_TIMEOUT = float(os.environ.get("TTS_DAEMON_TIMEOUT", "0.5"))
 
 _pending_since = {}   # transcript path -> (ts, wallclock first seen)
 
