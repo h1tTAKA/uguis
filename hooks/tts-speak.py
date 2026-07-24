@@ -198,7 +198,9 @@ def clean(t):
         if code_score(c) >= CODE_MAX:
             continue  # code chunk -> omit
         kept.append(strip_prose_code(c).strip())
-    t = ", ".join(k for k in kept if k)
+    # join clauses with a plain space (no comma) so the neural voice does not
+    # insert a pause at every clause boundary. TTS_JOIN=", " restores pauses.
+    t = JOIN.join(k for k in kept if k)
 
     t = re.sub(r"[*_#>`~|]", "", t)
     t = re.sub(r"[ \t]+", " ", t)
@@ -282,6 +284,8 @@ _END = object()   # queue sentinel
 
 
 FIRST_CHUNK = int(os.environ.get("TTS_FIRST_CHUNK", "15"))
+# how kept clauses are joined; " " = no pause, ", " = short pause between them
+JOIN = os.environ.get("TTS_JOIN", " ")
 
 
 def chunk_text(s):
