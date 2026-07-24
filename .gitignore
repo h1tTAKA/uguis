@@ -1,0 +1,6 @@
+.tts-off
+.tts-last-*
+settings.json.bak-uguis
+__pycache__/
+*.pyc
+.DS_Store
