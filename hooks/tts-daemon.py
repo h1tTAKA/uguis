@@ -96,9 +96,10 @@ def _has_more_work_after(all_events, i):
 
 
 def _event_segments(ev, all_events, i):
-    """(speech, rate) list for one assistant event. Text is fast unless it is
-    the turn's last speakable content (then normal); AskUserQuestion always
-    normal."""
+    """(speech, rate, kind) list for one assistant event. kind is 'progress'
+    (mid-turn, fast), 'final' (turn's last text, normal), or 'question'
+    (normal, voiced immediately). kind — not rate — drives catch-up, since the
+    two rates may be configured equal."""
     content = ev.get("message", {}).get("content", [])
     if isinstance(content, str):
         content = [{"type": "text", "text": content}]
@@ -113,11 +114,12 @@ def _event_segments(ev, all_events, i):
             if not txt:
                 continue
             is_final = not more_in_event and not tail_continues
-            segs.append((txt, tts.EDGE_RATE if is_final else tts.EDGE_RATE_FAST))
+            segs.append((txt, tts.EDGE_RATE if is_final else tts.EDGE_RATE_FAST,
+                         "final" if is_final else "progress"))
         elif b.get("type") == "tool_use" and b.get("name") == "AskUserQuestion":
             q = tts.question_to_text(b.get("input", {}))
             if q:
-                segs.append((q, tts.EDGE_RATE))   # questions: normal rate
+                segs.append((q, tts.EDGE_RATE, "question"))
     return segs
 
 
@@ -162,11 +164,11 @@ def speak_new_events(tp):
         last_ts = ts
     if not flat:
         return
-    # catch-up: if we're behind, drop stale progress (fast) that has a later
-    # segment; always keep final answers / questions (normal rate). Keeps
-    # playback near real time instead of trailing a backlog.
-    plan = [(t, r) for k, (t, r) in enumerate(flat)
-            if not (r == tts.EDGE_RATE_FAST and k < len(flat) - 1)]
+    # catch-up: if we're behind, drop stale progress that has a later segment;
+    # always keep final answers / questions. Keeps playback near real time
+    # instead of trailing a backlog. (keyed on kind, not rate)
+    plan = [(t, r) for k, (t, r, kind) in enumerate(flat)
+            if not (kind == "progress" and k < len(flat) - 1)]
     # clean + cap, then hand to the prefetch pipeline (synthesize next chunk
     # while the current one plays -> no gaps between chunks).
     cleaned, total = [], 0
