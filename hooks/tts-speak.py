@@ -281,7 +281,7 @@ def find_edge():
 _END = object()   # queue sentinel
 
 
-FIRST_CHUNK = int(os.environ.get("TTS_FIRST_CHUNK", "30"))
+FIRST_CHUNK = int(os.environ.get("TTS_FIRST_CHUNK", "15"))
 
 
 def chunk_text(s):
