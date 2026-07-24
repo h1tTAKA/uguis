@@ -28,6 +28,8 @@ OFF_FLAG = os.path.join(HOME, ".claude", ".tts-off")
 ENGINE = os.environ.get("TTS_ENGINE", "edge")
 EDGE_VOICE = os.environ.get("TTS_EDGE_VOICE", "ko-KR-SunHiNeural")
 EDGE_RATE = os.environ.get("TTS_EDGE_RATE", "+60%")
+# faster rate for intermediate progress narration (non-final, non-question)
+EDGE_RATE_FAST = os.environ.get("TTS_EDGE_RATE_FAST", "+100%")
 VOLUME = os.environ.get("TTS_VOLUME", "0.6")   # afplay gain: 1.0 = normal
 VOICE = os.environ.get("TTS_VOICE", "Yuna")   # say fallback voice
 RATE = os.environ.get("TTS_RATE", "210")       # say fallback rate (wpm)
@@ -123,12 +125,19 @@ def collect_turn(path):
             if b.get("type") == "text":
                 txt = b.get("text", "").strip()
                 if txt:
-                    segments.append((txt, EDGE_RATE))
+                    segments.append((txt, "text"))
             elif b.get("type") == "tool_use" and b.get("name") == "AskUserQuestion":
                 q = question_to_text(b.get("input", {}))
                 if q:
-                    segments.append((q, EDGE_RATE))
-    return segments, max_ts
+                    segments.append((q, "question"))
+    # assign rate: the final segment and any question spoken at normal rate;
+    # earlier progress narration spoken faster.
+    out = []
+    for i, (txt, kind) in enumerate(segments):
+        is_last = i == len(segments) - 1
+        rate = EDGE_RATE if (is_last or kind == "question") else EDGE_RATE_FAST
+        out.append((txt, rate))
+    return out, max_ts
 
 
 # regexes used to score / strip bare (non-backtick) code in prose
