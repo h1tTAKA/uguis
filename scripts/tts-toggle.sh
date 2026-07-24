@@ -12,9 +12,9 @@ case "$action" in
   on)     rm -f "$FLAG" ;;
   off)    : > "$FLAG" ; pkill -x afplay 2>/dev/null ;;
   toggle) if [ -f "$FLAG" ]; then rm -f "$FLAG"; else : > "$FLAG"; pkill -x afplay 2>/dev/null; fi ;;
-  start)   launchctl load -w "$PLIST" 2>/dev/null; echo "daemon: starting..."; exit 0 ;;
-  stop)    launchctl unload "$PLIST" 2>/dev/null; pkill -f tts-daemon.py 2>/dev/null; pkill -x afplay 2>/dev/null; echo "daemon: stopped"; exit 0 ;;
-  restart) launchctl unload "$PLIST" 2>/dev/null; launchctl load -w "$PLIST" 2>/dev/null; echo "daemon: restarted"; exit 0 ;;
+  start)   launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null; launchctl kickstart -k "gui/$(id -u)/com.uguis.tts" 2>/dev/null; echo "daemon: starting..."; exit 0 ;;
+  stop)    launchctl bootout "gui/$(id -u)/com.uguis.tts" 2>/dev/null; pkill -f tts-daemon.py 2>/dev/null; pkill -x afplay 2>/dev/null; echo "daemon: stopped"; exit 0 ;;
+  restart) launchctl kickstart -k "gui/$(id -u)/com.uguis.tts" 2>/dev/null; echo "daemon: restarted"; exit 0 ;;
   status)  : ;;
   *)       echo "usage: tts-toggle.sh {on|off|toggle|status|start|stop|restart}"; exit 1 ;;
 esac

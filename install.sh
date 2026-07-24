@@ -53,9 +53,13 @@ sed -e "s#__PYTHON__#$PY_BIN#" \
     -e "s#__DAEMON__#$CLAUDE/hooks/tts-daemon.py#" \
     -e "s#__HOME__#$HOME#" \
     "$SRC/com.uguis.tts.plist" > "$PLIST"
-launchctl unload "$PLIST" 2>/dev/null || true
-launchctl load -w "$PLIST"
-echo "==> Loaded launchd agent com.uguis.tts"
+# bootstrap into the GUI domain so afplay reaches the user's audio session
+# (plain `launchctl load` can land in a domain with no audio).
+GUI="gui/$(id -u)"
+launchctl bootout "$GUI/com.uguis.tts" 2>/dev/null || true
+launchctl bootstrap "$GUI" "$PLIST"
+launchctl kickstart -k "$GUI/com.uguis.tts" 2>/dev/null || true
+echo "==> Bootstrapped launchd agent com.uguis.tts into $GUI"
 
 echo
 echo "Done. The daemon is running now — no Claude Code restart needed."
