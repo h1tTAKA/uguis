@@ -42,13 +42,36 @@ def off():
     return os.path.exists(OFF_FLAG)
 
 
-def last_assistant(path):
-    """Return (text, timestamp) of the newest assistant turn that has text."""
+def _is_user_prompt(ev):
+    """A real user turn-start, not a mid-turn tool_result user event."""
+    content = ev.get("message", {}).get("content", [])
+    if isinstance(content, str):
+        return True
+    if isinstance(content, list):
+        # tool_result blocks = mid-turn (Claude called a tool); anything else
+        # (text/image typed by the user) = an actual prompt = turn boundary.
+        return not any(isinstance(b, dict) and b.get("type") == "tool_result"
+                       for b in content)
+    return True
+
+
+def collect_turn(path):
+    """Return (segments, turn_max_ts) for the newest assistant turn.
+
+    One turn spans multiple assistant events (progress text, tool calls,
+    a final answer, an AskUserQuestion) interleaved with tool_result user
+    events. We walk back from the end collecting assistant events until a
+    genuine user prompt marks the turn start, then emit their speakable
+    content in chronological order.
+
+    segments = list of (speech_text, rate) in the order they should be spoken.
+    """
     try:
         with open(path, "r", encoding="utf-8") as f:
             lines = f.readlines()
     except Exception:
-        return "", ""
+        return [], ""
+    turn = []
     for line in reversed(lines):
         line = line.strip()
         if not line:
@@ -57,21 +80,29 @@ def last_assistant(path):
             ev = json.loads(line)
         except Exception:
             continue
-        if ev.get("type") != "assistant":
-            continue
+        t = ev.get("type")
+        if t == "assistant":
+            turn.append(ev)
+        elif t == "user":
+            if _is_user_prompt(ev):
+                break          # reached the start of this turn
+            continue           # tool_result: still inside the turn
+        # other event types: ignore
+    turn.reverse()             # chronological
+    segments, max_ts = [], ""
+    for ev in turn:
         ts = ev.get("timestamp", "")
+        if ts > max_ts:
+            max_ts = ts
         content = ev.get("message", {}).get("content", [])
-        parts = []
         if isinstance(content, str):
-            parts.append(content)
-        else:
-            for b in content:
-                if isinstance(b, dict) and b.get("type") == "text":
-                    parts.append(b.get("text", ""))
-        text = "\n".join(p for p in parts if p).strip()
-        if text:
-            return text, ts
-    return "", ""
+            content = [{"type": "text", "text": content}]
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "text":
+                txt = b.get("text", "").strip()
+                if txt:
+                    segments.append((txt, EDGE_RATE))
+    return segments, max_ts
 
 
 # regexes used to score / strip bare (non-backtick) code in prose
@@ -164,13 +195,13 @@ def write_state(transcript, ts):
 def worker(path):
     """Poll until a turn newer than last-spoken appears, then speak it."""
     last_spoken = read_state(path)
-    text, ts = "", ""
+    segments, ts = [], ""
     for _ in range(POLL_TRIES):
         if off():
             return
-        text, ts = last_assistant(path)
+        segments, ts = collect_turn(path)
         # ISO-8601 timestamps sort chronologically as strings
-        if text and ts and ts > last_spoken:
+        if segments and ts and ts > last_spoken:
             break
         time.sleep(POLL_SLEEP)
     else:
@@ -178,20 +209,27 @@ def worker(path):
     if off():
         return
     write_state(path, ts)
-    speech = clean(text)
-    if not speech:
+    # clean each segment, keep its rate, cap total length
+    spoken, total = [], 0
+    for text, rate in segments:
+        s = clean(text)
+        if not s:
+            continue
+        if total + len(s) > MAX_CHARS:
+            s = s[:max(0, MAX_CHARS - total)].rsplit(" ", 1)[0] + " ..."
+        spoken.append((s, rate))
+        total += len(s)
+        if total >= MAX_CHARS:
+            break
+    if not spoken:
         # whole turn was code -> brief notice instead of silence
-        speech = "코드 위주 답변이라 음성은 생략합니다." if text.strip() else ""
-        if not speech:
-            return
-    if len(speech) > MAX_CHARS:
-        speech = speech[:MAX_CHARS].rsplit(" ", 1)[0] + " ..."
+        spoken = [("코드 위주 답변이라 음성은 생략합니다.", EDGE_RATE)]
     # stop any in-flight playback so turns don't overlap
     subprocess.run(["pkill", "-x", "afplay"], stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-x", "say"], stderr=subprocess.DEVNULL)
-    if ENGINE == "edge" and speak_edge(speech, path, ts):
+    if ENGINE == "edge" and speak_edge(spoken, path, ts):
         return
-    speak_say(speech)   # offline / failure fallback
+    speak_say(" ".join(s for s, _ in spoken))   # offline / failure fallback
 
 
 def find_edge():
@@ -231,10 +269,10 @@ def superseded(path, ts):
     return off() or (read_state(path) or "") > ts
 
 
-def synth_chunk(edge, text, mp3):
+def synth_chunk(edge, text, mp3, rate=EDGE_RATE):
     try:
         r = subprocess.run(
-            [edge, "--voice", EDGE_VOICE, "--rate", EDGE_RATE,
+            [edge, "--voice", EDGE_VOICE, "--rate", rate,
              "--text", text, "--write-media", mp3],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25,
         )
@@ -243,22 +281,26 @@ def synth_chunk(edge, text, mp3):
         return False
 
 
-def speak_edge(speech, path, ts):
+def speak_edge(segments, path, ts):
     """Chunked neural TTS: a producer thread synthesizes sentences while we
     play them in order, so audio starts right after the first chunk. Stops
-    early if a newer turn supersedes this one. Returns True if anything played."""
+    early if a newer turn supersedes this one. Returns True if anything played.
+
+    segments = list of (speech_text, rate); each is chunked and synthesized
+    at its own rate, so progress narration can be spoken faster than the
+    final answer."""
     edge = find_edge()
     if not edge:
         return False
-    chunks = chunk_text(speech)
+    chunks = [(ch, rate) for text, rate in segments for ch in chunk_text(text)]
     q = queue.Queue()
 
     def producer():
-        for i, ch in enumerate(chunks):
+        for i, (ch, rate) in enumerate(chunks):
             if superseded(path, ts):
                 break
             mp3 = tempfile.mktemp(suffix=".mp3", prefix="tts%d_" % i)
-            q.put(mp3 if synth_chunk(edge, ch, mp3) else None)
+            q.put(mp3 if synth_chunk(edge, ch, mp3, rate) else None)
         q.put(_END)
 
     threading.Thread(target=producer, daemon=True).start()
