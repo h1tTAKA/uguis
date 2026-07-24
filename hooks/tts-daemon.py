@@ -27,6 +27,7 @@ POLL = float(os.environ.get("TTS_DAEMON_POLL", "0.1"))   # seconds between check
 PENDING_TIMEOUT = float(os.environ.get("TTS_DAEMON_TIMEOUT", "0.3"))
 
 _pending_since = {}   # transcript path -> (ts, wallclock first seen)
+TAIL_LINES = int(os.environ.get("TTS_DAEMON_TAIL", "400"))   # parse only last N
 
 # reuse helpers/constants from the sibling hook script (hyphenated name -> importlib)
 _spec = importlib.util.spec_from_file_location(
@@ -48,18 +49,22 @@ def active_transcript():
 
 
 def iter_events(path):
+    # Only parse the tail: transcripts grow to thousands of lines over a
+    # session, and a single turn spans at most a few dozen events. Parsing the
+    # whole file every poll made first-audio latency grow with session length.
     try:
         with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    yield json.loads(line)
-                except Exception:
-                    continue          # partial/!json line: retried next poll
+            lines = f.readlines()
     except Exception:
         return
+    for line in lines[-TAIL_LINES:]:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            yield json.loads(line)
+        except Exception:
+            continue              # partial/!json line: retried next poll
 
 
 def _state_path(tp):
