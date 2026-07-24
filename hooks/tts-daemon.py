@@ -23,6 +23,11 @@ CLAUDE = os.path.join(HOME, ".claude")
 OFF_FLAG = os.path.join(CLAUDE, ".tts-off")
 PROJECTS = os.path.join(CLAUDE, "projects")
 POLL = float(os.environ.get("TTS_DAEMON_POLL", "0.3"))   # seconds between checks
+# how long a still-streaming final text must be stable before we voice it at
+# normal rate (can't tell "final" from "progress" until work stops following)
+PENDING_TIMEOUT = float(os.environ.get("TTS_DAEMON_TIMEOUT", "2.0"))
+
+_pending_since = {}   # transcript path -> (ts, wallclock first seen)
 
 # reuse helpers/constants from the sibling hook script (hyphenated name -> importlib)
 _spec = importlib.util.spec_from_file_location(
@@ -110,31 +115,85 @@ def play_segment(text, rate, should_stop):
                            stdout=_DEVNULL, stderr=_DEVNULL)
 
 
+def _has_more_work_after(all_events, i):
+    """Does the turn continue after event i? (later assistant event, or a
+    tool_result user event). A real user prompt = boundary = no more work."""
+    for e in all_events[i + 1:]:
+        t = e.get("type")
+        if t == "assistant":
+            return True
+        if t == "user":
+            return not tts._is_user_prompt(e)
+    return False
+
+
+def _event_segments(ev, all_events, i):
+    """(speech, rate) list for one assistant event. Text is fast unless it is
+    the turn's last speakable content (then normal); AskUserQuestion always
+    normal."""
+    content = ev.get("message", {}).get("content", [])
+    if isinstance(content, str):
+        content = [{"type": "text", "text": content}]
+    blocks = [b for b in content if isinstance(b, dict)]
+    tail_continues = _has_more_work_after(all_events, i)
+    segs = []
+    for j, b in enumerate(blocks):
+        more_in_event = any(bb.get("type") in ("text", "tool_use")
+                            for bb in blocks[j + 1:])
+        if b.get("type") == "text":
+            txt = b.get("text", "").strip()
+            if not txt:
+                continue
+            is_final = not more_in_event and not tail_continues
+            segs.append((txt, tts.EDGE_RATE if is_final else tts.EDGE_RATE_FAST))
+        elif b.get("type") == "tool_use" and b.get("name") == "AskUserQuestion":
+            q = tts.question_to_text(b.get("input", {}))
+            if q:
+                segs.append((q, tts.EDGE_RATE))   # questions: normal rate
+    return segs
+
+
+def _stable_long_enough(tp, ts):
+    """True once the newest event's ts has stayed newest for PENDING_TIMEOUT —
+    i.e. streaming stopped, so it's a final answer, not mid-turn progress."""
+    now = time.time()
+    prev = _pending_since.get(tp)
+    if not prev or prev[0] != ts:
+        _pending_since[tp] = (ts, now)
+        return False
+    return (now - prev[1]) >= PENDING_TIMEOUT
+
+
 def speak_new_events(tp):
-    """Speak assistant text events newer than last-spoken. Baselines a freshly
-    seen transcript (no history flood)."""
+    """Speak assistant events newer than last-spoken, in order, classifying
+    rate by lookahead. Baselines a freshly seen transcript (no history flood)."""
     last = read_state(tp)
-    events = [e for e in iter_events(tp) if e.get("type") == "assistant"]
-    if not events:
+    all_events = list(iter_events(tp))
+    a_idx = [i for i, e in enumerate(all_events) if e.get("type") == "assistant"]
+    if not a_idx:
         return
     if not last:
-        # first sight of this transcript: mark current tail as already spoken
-        write_state(tp, max(e.get("timestamp", "") for e in events))
+        write_state(tp, max(all_events[i].get("timestamp", "") for i in a_idx))
         return
-    for ev in events:
+    n = len(all_events)
+    for i in a_idx:
+        ev = all_events[i]
         ts = ev.get("timestamp", "")
         if not ts or ts <= last:
             continue
         if off():
             return
-        content = ev.get("message", {}).get("content", [])
-        if isinstance(content, str):
-            content = [{"type": "text", "text": content}]
-        for b in content:
-            if isinstance(b, dict) and b.get("type") == "text":
-                txt = b.get("text", "").strip()
-                if txt:
-                    play_segment(txt, tts.EDGE_RATE, off)
+        blocks = ev.get("message", {}).get("content", [])
+        has_q = isinstance(blocks, list) and any(
+            isinstance(b, dict) and b.get("name") == "AskUserQuestion" for b in blocks)
+        # newest line with no follower: still streaming -> wait unless it's a
+        # question (nothing follows a question until the user answers).
+        if i == n - 1 and not has_q and not _stable_long_enough(tp, ts):
+            return
+        for txt, rate in _event_segments(ev, all_events, i):
+            if off():
+                return
+            play_segment(txt, rate, off)
         write_state(tp, ts)
 
 
