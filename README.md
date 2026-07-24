@@ -16,6 +16,11 @@ Edge TTS supports (English, Japanese, …) via one env var.
 - **Code-aware**: dense code clauses are dropped; a stray method name in prose
   is read by name only (args stripped). Code blocks, backticks, URLs, emoji,
   and markdown are always removed.
+- **Whole turn, in order**: intermediate progress narration (the lines shown
+  between tool calls) and **AskUserQuestion prompts + option labels** are voiced
+  too — not just the final message. Progress is spoken faster
+  (`TTS_EDGE_RATE_FAST`) since it's just status; the final answer and questions
+  stay at normal speed.
 - **Streaming-ish**: the answer is split into ~200-char chunks; the first chunk
   plays while later chunks synthesize in the background.
 - **Non-blocking**: the hook returns instantly (~0.08s) and a detached worker
@@ -70,7 +75,8 @@ Set env vars on the hook command in `~/.claude/settings.json`
 |---|---|---|
 | `TTS_ENGINE` | `edge` | `say` = offline macOS voice |
 | `TTS_EDGE_VOICE` | `ko-KR-SunHiNeural` | any Edge voice (e.g. `en-US-AvaMultilingualNeural`) |
-| `TTS_EDGE_RATE` | `+60%` | speaking rate |
+| `TTS_EDGE_RATE` | `+60%` | speaking rate (final answer + questions) |
+| `TTS_EDGE_RATE_FAST` | `+100%` | speaking rate for intermediate progress narration |
 | `TTS_VOLUME` | `0.6` | afplay gain (1.0 = normal) |
 | `TTS_MAX` | `1000` | max chars (truncates beyond) |
 | `TTS_CODE_MAX` | `3` | clauses with ≥ this many code tokens are dropped |
@@ -86,6 +92,12 @@ At `Stop` the current turn may not be flushed to the transcript yet, so the
 worker records the last-spoken timestamp per transcript and polls (~6s max)
 until a genuinely newer assistant turn appears — preventing both double-play
 and replaying the previous turn.
+
+A turn spans several assistant events (progress text, tool calls, a final
+answer, an AskUserQuestion) interleaved with tool-result events. The worker
+walks back from the end collecting assistant events until the real user prompt
+(tool-result events are crossed, not treated as the boundary), then speaks each
+segment in order at its rate.
 
 ## Uninstall
 
