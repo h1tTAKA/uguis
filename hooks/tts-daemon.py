@@ -10,6 +10,7 @@ final answer, question) the moment it is written — independent of any hook.
 Reuses the synthesis/clean helpers from tts-speak.py so there is one code path
 for voice, code-filtering, and chunking.
 """
+import datetime
 import glob
 import importlib.util
 import json
@@ -28,6 +29,9 @@ PENDING_TIMEOUT = float(os.environ.get("TTS_DAEMON_TIMEOUT", "0.3"))
 
 _pending_since = {}   # transcript path -> (ts, wallclock first seen)
 TAIL_LINES = int(os.environ.get("TTS_DAEMON_TAIL", "400"))   # parse only last N
+# if one poll's backlog spans more than this many seconds of conversation, we're
+# too far behind to play it all — jump to the newest segment (fast-forward).
+FASTFWD_GAP = float(os.environ.get("TTS_DAEMON_FASTFWD", "10"))
 
 # reuse helpers/constants from the sibling hook script (hyphenated name -> importlib)
 _spec = importlib.util.spec_from_file_location(
@@ -139,6 +143,21 @@ def _stable_long_enough(tp, ts):
     return (now - prev[1]) >= PENDING_TIMEOUT
 
 
+def _parse_ts(ts):
+    """ISO-8601 (…Z) -> naive UTC datetime. strptime works on py3.9 (no Z in
+    fromisoformat there)."""
+    try:
+        return datetime.datetime.strptime(
+            ts.replace("Z", "").split(".")[0], "%Y-%m-%dT%H:%M:%S")
+    except Exception:
+        return None
+
+
+def _seconds_between(a, b):
+    da, db = _parse_ts(a), _parse_ts(b)
+    return (db - da).total_seconds() if da and db else 0.0
+
+
 def speak_new_events(tp):
     """Speak assistant events newer than last-spoken, in order, classifying
     rate by lookahead. Baselines a freshly seen transcript (no history flood)."""
@@ -152,7 +171,7 @@ def speak_new_events(tp):
         return
     n = len(all_events)
     # collect this poll's new events (in order) as flat (text, rate) segments
-    flat, last_ts = [], None
+    flat, first_ts, last_ts = [], None, None
     for i in a_idx:
         ev = all_events[i]
         ts = ev.get("timestamp", "")
@@ -166,9 +185,17 @@ def speak_new_events(tp):
         if i == n - 1 and not has_q and not _stable_long_enough(tp, ts):
             break
         flat.extend(_event_segments(ev, all_events, i))
+        if first_ts is None:
+            first_ts = ts
         last_ts = ts
     if not flat:
         return
+    # global fast-forward: if this batch spans more than FASTFWD_GAP seconds of
+    # conversation, playback can't keep up — skip the backlog and play only the
+    # newest segment so we're speaking "now", not minutes ago. state jumps to
+    # last_ts regardless, so the skipped events are never replayed.
+    if len(flat) > 1 and _seconds_between(first_ts, last_ts) > FASTFWD_GAP:
+        flat = flat[-1:]
     # catch-up: if we're behind, drop stale progress that has a later segment;
     # always keep final answers / questions. Keeps playback near real time
     # instead of trailing a backlog. (keyed on kind, not rate)
