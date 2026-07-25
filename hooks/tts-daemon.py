@@ -21,6 +21,7 @@ import time
 HOME = os.path.expanduser("~")
 CLAUDE = os.path.join(HOME, ".claude")
 OFF_FLAG = os.path.join(CLAUDE, ".tts-off")
+REPLAY_FLAG = os.path.join(CLAUDE, ".tts-replay")   # touch -> re-read latest
 PROJECTS = os.path.join(CLAUDE, "projects")
 POLL = float(os.environ.get("TTS_DAEMON_POLL", "0.1"))   # seconds between checks
 # how long a still-streaming final text must be stable before we voice it at
@@ -158,6 +159,44 @@ def _seconds_between(a, b):
     return (db - da).total_seconds() if da and db else 0.0
 
 
+def _speak_segments(segs, tp):
+    """clean + MAX_CHARS cap + play (edge prefetch pipeline, say fallback).
+    Shared by normal playback and replay."""
+    cleaned, total = [], 0
+    for txt, rate in segs:
+        s = tts.clean(txt)
+        if not s:
+            continue
+        if total + len(s) > tts.MAX_CHARS:
+            s = s[:max(0, tts.MAX_CHARS - total - 4)]
+            s = (s.rsplit(" ", 1)[0] if " " in s else s) + " ..."
+        cleaned.append((s, rate))
+        total += len(s)
+        if total >= tts.MAX_CHARS:
+            break
+    if not cleaned or off():
+        return
+    if not tts.speak_edge(cleaned, tp, ""):              # edge pipeline
+        for s, rate in cleaned:                          # offline say fallback
+            if off():
+                break
+            subprocess.run(["say", "-v", tts.VOICE, "-r", tts.RATE, s],
+                           stdout=_DEVNULL, stderr=_DEVNULL)
+
+
+def replay_latest(tp):
+    """Re-speak the most recent turn's final answer / question (skip progress).
+    Independent of state, so it never disturbs normal dedup."""
+    all_events = list(iter_events(tp))
+    a_idx = [i for i, e in enumerate(all_events) if e.get("type") == "assistant"]
+    for i in reversed(a_idx):
+        finals = [(t, r) for (t, r, k) in _event_segments(all_events[i], all_events, i)
+                  if k in ("final", "question")]
+        if finals:
+            _speak_segments(finals, tp)
+            return
+
+
 def speak_new_events(tp):
     """Speak assistant events newer than last-spoken, in order, classifying
     rate by lookahead. Baselines a freshly seen transcript (no history flood)."""
@@ -201,28 +240,7 @@ def speak_new_events(tp):
     # instead of trailing a backlog. (keyed on kind, not rate)
     plan = [(t, r) for k, (t, r, kind) in enumerate(flat)
             if not (kind == "progress" and k < len(flat) - 1)]
-    # clean + cap, then hand to the prefetch pipeline (synthesize next chunk
-    # while the current one plays -> no gaps between chunks).
-    cleaned, total = [], 0
-    for txt, rate in plan:
-        s = tts.clean(txt)
-        if not s:
-            continue
-        if total + len(s) > tts.MAX_CHARS:
-            s = s[:max(0, tts.MAX_CHARS - total - 4)]
-            s = (s.rsplit(" ", 1)[0] if " " in s else s) + " ..."
-        cleaned.append((s, rate))
-        total += len(s)
-        if total >= tts.MAX_CHARS:
-            break
-    if not cleaned or off():
-        return
-    if not tts.speak_edge(cleaned, tp, last_ts or ""):   # edge pipeline
-        for s, rate in cleaned:                          # offline say fallback
-            if off():
-                break
-            subprocess.run(["say", "-v", tts.VOICE, "-r", tts.RATE, s],
-                           stdout=_DEVNULL, stderr=_DEVNULL)
+    _speak_segments(plan, tp)
     if last_ts:
         write_state(tp, last_ts)
 
@@ -239,6 +257,12 @@ def main():
             continue
         tp = active_transcript()
         if tp:
+            if os.path.exists(REPLAY_FLAG):      # user asked to re-read
+                try:
+                    os.remove(REPLAY_FLAG)       # one-shot
+                except OSError:
+                    pass
+                replay_latest(tp)
             speak_new_events(tp)
         time.sleep(POLL)
 
