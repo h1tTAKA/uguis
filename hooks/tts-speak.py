@@ -203,8 +203,11 @@ def clean(t):
     t = JOIN.join(k for k in kept if k)
 
     t = re.sub(r"[*_#>`~|]", "", t)
+    # drop the pause after clause/sentence punctuation: a ,.:; that is followed
+    # by whitespace/end becomes a plain space, so the neural voice doesn't stop.
+    # decimals (0.05) and file.ext (colors.ts) keep their dot — no trailing space.
+    t = re.sub(r"\s*[,.:;]+(?=\s|$)", " ", t)
     t = re.sub(r"[ \t]+", " ", t)
-    t = re.sub(r"\s*[,.]\s*(?:[,.]\s*)+", ", ", t)   # collapse punct runs
     return t.strip()
 
 
