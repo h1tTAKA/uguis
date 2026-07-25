@@ -29,8 +29,8 @@ def main():
     try:
         open(os.path.join(os.path.expanduser("~"), ".claude", ".tts-replay"), "w").close()
     except Exception:
-        pass
-    sys.exit(2)                      # block: prompt is not sent to the model
+        return                       # flag write failed -> let the prompt through
+    sys.exit(2)                      # block only after the signal is set
 
 
 if __name__ == "__main__":
