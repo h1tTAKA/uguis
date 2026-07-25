@@ -263,17 +263,21 @@ def main():
     # speak_new_events and the pending line was never spoken. Tail parse is ~2ms,
     # so polling every tick is cheap.
     while True:
+        # consume the one-shot replay flag first, even when muted, so a request
+        # made while off is dropped (not fired later on unmute).
+        replay_requested = os.path.exists(REPLAY_FLAG)
+        if replay_requested:
+            try:
+                os.remove(REPLAY_FLAG)
+            except OSError:
+                pass
         if off():
             subprocess.run(["pkill", "-x", "afplay"], stderr=_DEVNULL)
             time.sleep(POLL)
             continue
         tp = active_transcript()
         if tp:
-            if os.path.exists(REPLAY_FLAG):      # user asked to re-read
-                try:
-                    os.remove(REPLAY_FLAG)       # one-shot
-                except OSError:
-                    pass
+            if replay_requested:
                 replay_latest(tp)
             speak_new_events(tp)
         time.sleep(POLL)
