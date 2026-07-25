@@ -57,8 +57,8 @@ Or directly:
 ```bash
 bash ~/.claude/scripts/tts-toggle.sh off       # mute (daemon keeps running)
 bash ~/.claude/scripts/tts-toggle.sh on        # unmute
-# replay: just type `re` (or "다시 읽어줘") as a prompt — a UserPromptSubmit
-# hook re-speaks the latest answer without a Claude turn (no chatter).
+# voice commands as plain prompts (a UserPromptSubmit hook runs them with no
+# Claude turn): `re` / "다시 읽어줘" = replay latest; `stop` / "멈춰" = stop now.
 bash ~/.claude/scripts/tts-toggle.sh shush     # stop the CURRENT playback only
 bash ~/.claude/scripts/tts-toggle.sh rate 55   # speaking rate +55% (live, no restart)
 bash ~/.claude/scripts/tts-toggle.sh pause 1   # pause at ,.:; — 0 none / 1 some / 2 more
@@ -110,10 +110,10 @@ the last one spoken:
   newest segment is spoken (global fast-forward) — playback never trails a
   minutes-long backlog. Playback is not auto-cut on a new prompt; say "멈춰"
   (`shush`) to stop the current playback yourself.
-- **Replay**: typing `re` (or "다시 읽어줘") is caught by a UserPromptSubmit hook
-  that touches `~/.claude/.tts-replay` and blocks the prompt (no Claude turn, no
-  chatter); the daemon consumes the one-shot flag and re-speaks the latest
-  final/question, independent of state.
+- **Prompt commands**: a UserPromptSubmit hook catches exact keywords and blocks
+  the prompt (no Claude turn, no chatter): `re`/"다시 읽어줘" re-speaks the latest
+  answer (via the one-shot `~/.claude/.tts-replay` flag); `stop`/"멈춰"/"그만"
+  stops the current playback. Non-exact prompts ("stop the server") pass through.
 - **Baseline on start**: a freshly seen transcript is marked as already spoken,
   so the daemon never replays history.
 
