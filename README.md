@@ -58,12 +58,17 @@ Or directly:
 bash ~/.claude/scripts/tts-toggle.sh off       # mute (daemon keeps running)
 bash ~/.claude/scripts/tts-toggle.sh on        # unmute
 bash ~/.claude/scripts/tts-toggle.sh shush     # stop the CURRENT playback only
+bash ~/.claude/scripts/tts-toggle.sh rate 55   # speaking rate +55% (live, no restart)
+bash ~/.claude/scripts/tts-toggle.sh pause 1   # pause at ,.:; — 0 none / 1 some / 2 more
 bash ~/.claude/scripts/tts-toggle.sh status    # mute state + daemon alive?
 bash ~/.claude/scripts/tts-toggle.sh stop      # stop the daemon
 bash ~/.claude/scripts/tts-toggle.sh start     # start it
 ```
 
 Instant mute without the script: `touch ~/.claude/.tts-off` (delete to unmute).
+
+`rate`/`pause` write to `~/.claude/.tts-config` (`KEY=VALUE`), which the daemon
+re-reads live — no restart. Say "속도 50" / "쉼 1" and the uguis skill runs them.
 
 ## Configuration
 

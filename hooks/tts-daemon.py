@@ -123,12 +123,12 @@ def _event_segments(ev, all_events, i):
             if not txt:
                 continue
             is_final = not more_in_event and not tail_continues
-            segs.append((txt, tts.EDGE_RATE if is_final else tts.EDGE_RATE_FAST,
+            segs.append((txt, tts.cfg_rate() if is_final else tts.cfg_rate_fast(),
                          "final" if is_final else "progress"))
         elif b.get("type") == "tool_use" and b.get("name") == "AskUserQuestion":
             q = tts.question_to_text(b.get("input", {}))
             if q:
-                segs.append((q, tts.EDGE_RATE, "question"))
+                segs.append((q, tts.cfg_rate(), "question"))
     return segs
 
 

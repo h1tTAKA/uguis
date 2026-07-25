@@ -39,6 +39,38 @@ CODE_MAX = int(os.environ.get("TTS_CODE_MAX", "3"))
 POLL_TRIES = 40      # 40 * 0.15s = ~6s max wait for flush
 POLL_SLEEP = 0.15
 
+# runtime-tunable settings: a live-read KEY=VALUE file so the user can adjust
+# rate/pause without restarting (env vars are only read once at startup).
+CONFIG = os.path.join(HOME, ".claude", ".tts-config")
+
+
+def _cfg(key, default):
+    try:
+        with open(CONFIG) as f:
+            for line in f:
+                k, _, v = line.strip().partition("=")
+                if k == key and v:
+                    return v
+    except Exception:
+        pass
+    return default
+
+
+def cfg_rate():
+    return _cfg("rate", EDGE_RATE)
+
+
+def cfg_rate_fast():
+    return _cfg("rate_fast", cfg_rate())   # unset rate_fast -> follow rate
+
+
+def cfg_pause():
+    # 0 = no pause (strip ,.:;), 1 = keep punctuation, 2 = comma-join clauses too
+    try:
+        return int(_cfg("pause", "0"))
+    except Exception:
+        return 0
+
 
 def off():
     return os.path.exists(OFF_FLAG)
@@ -198,15 +230,17 @@ def clean(t):
         if code_score(c) >= CODE_MAX:
             continue  # code chunk -> omit
         kept.append(strip_prose_code(c).strip())
-    # join clauses with a plain space (no comma) so the neural voice does not
-    # insert a pause at every clause boundary. TTS_JOIN=", " restores pauses.
-    t = JOIN.join(k for k in kept if k)
+    # pause level (live): 0 = space-join + strip ,.:; (no pauses),
+    # 1 = space-join but keep punctuation (small pauses),
+    # 2 = comma-join clauses too (more pauses).
+    p = cfg_pause()
+    t = (", " if p >= 2 else " ").join(k for k in kept if k)
 
     t = re.sub(r"[*_#>`~|]", "", t)
-    # drop the pause after clause/sentence punctuation: a ,.:; that is followed
-    # by whitespace/end becomes a plain space, so the neural voice doesn't stop.
-    # decimals (0.05) and file.ext (colors.ts) keep their dot — no trailing space.
-    t = re.sub(r"\s*[,.:;]+(?=\s|$)", " ", t)
+    if p == 0:
+        # drop the pause after clause/sentence punctuation (,.:; before space/end
+        # -> space). decimals (0.05) and file.ext (colors.ts) keep their dot.
+        t = re.sub(r"\s*[,.:;]+(?=\s|$)", " ", t)
     t = re.sub(r"[ \t]+", " ", t)
     return t.strip()
 
