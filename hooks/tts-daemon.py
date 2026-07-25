@@ -25,7 +25,7 @@ PROJECTS = os.path.join(CLAUDE, "projects")
 POLL = float(os.environ.get("TTS_DAEMON_POLL", "0.1"))   # seconds between checks
 # how long a still-streaming final text must be stable before we voice it at
 # normal rate (can't tell "final" from "progress" until work stops following)
-PENDING_TIMEOUT = float(os.environ.get("TTS_DAEMON_TIMEOUT", "0.3"))
+PENDING_TIMEOUT = float(os.environ.get("TTS_DAEMON_TIMEOUT", "0.2"))
 
 _pending_since = {}   # transcript path -> (ts, wallclock first seen)
 TAIL_LINES = int(os.environ.get("TTS_DAEMON_TAIL", "400"))   # parse only last N

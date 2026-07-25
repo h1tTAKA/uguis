@@ -283,7 +283,7 @@ def find_edge():
 _END = object()   # queue sentinel
 
 
-FIRST_CHUNK = int(os.environ.get("TTS_FIRST_CHUNK", "15"))
+FIRST_CHUNK = int(os.environ.get("TTS_FIRST_CHUNK", "8"))
 # how kept clauses are joined; " " = no pause, ", " = short pause between them
 JOIN = os.environ.get("TTS_JOIN", " ")
 
