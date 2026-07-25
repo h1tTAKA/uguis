@@ -13,6 +13,7 @@ echo "==> Installing uguis into $CLAUDE"
 mkdir -p "$CLAUDE/hooks" "$CLAUDE/scripts" "$CLAUDE/skills/uguis"
 cp "$SRC/hooks/tts-speak.py"        "$CLAUDE/hooks/"   # shared synth helpers
 cp "$SRC/hooks/tts-daemon.py"       "$CLAUDE/hooks/"
+cp "$SRC/hooks/tts-replay-hook.py"  "$CLAUDE/hooks/"
 cp "$SRC/scripts/tts-toggle.sh"     "$CLAUDE/scripts/"
 cp "$SRC/skills/uguis/SKILL.md"     "$CLAUDE/skills/uguis/"
 chmod +x "$CLAUDE/scripts/tts-toggle.sh"
@@ -43,6 +44,24 @@ if os.path.exists(sp):
         else: cfg.get("hooks", {}).pop("Stop", None)
         json.dump(cfg, open(sp, "w"), indent=2, ensure_ascii=False)
         print("==> Removed old Stop hook from", sp)
+PY
+
+# 3b. register the replay UserPromptSubmit hook (merge; keep other hooks)
+python3 - "$CLAUDE" <<'PY'
+import json, os, sys
+sp = os.path.join(sys.argv[1], "settings.json")
+cmd = "python3 '%s'" % os.path.join(sys.argv[1], "hooks", "tts-replay-hook.py")
+cfg = {}
+if os.path.exists(sp):
+    try: cfg = json.load(open(sp))
+    except Exception: cfg = {}
+ups = cfg.setdefault("hooks", {}).setdefault("UserPromptSubmit", [])
+if any("tts-replay-hook.py" in json.dumps(g) for g in ups):
+    print("==> replay hook already registered")
+else:
+    ups.append({"hooks": [{"type": "command", "command": cmd, "timeout": 5}]})
+    json.dump(cfg, open(sp, "w"), indent=2, ensure_ascii=False)
+    print("==> Registered replay UserPromptSubmit hook")
 PY
 
 # 4. launchd agent: fill the plist template with real paths, load it

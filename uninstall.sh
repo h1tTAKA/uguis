@@ -11,8 +11,9 @@ rm -f "$PLIST"
 
 rm -f "$CLAUDE/hooks/tts-speak.py" \
       "$CLAUDE/hooks/tts-daemon.py" \
+      "$CLAUDE/hooks/tts-replay-hook.py" \
       "$CLAUDE/scripts/tts-toggle.sh" \
-      "$CLAUDE/.tts-off" "$CLAUDE/.tts-daemon.log"
+      "$CLAUDE/.tts-off" "$CLAUDE/.tts-daemon.log" "$CLAUDE/.tts-config" "$CLAUDE/.tts-replay"
 rm -rf "$CLAUDE/skills/uguis"
 rm -f "$CLAUDE"/.tts-last-* "$CLAUDE"/.tts-daemon-* 2>/dev/null || true
 
@@ -21,12 +22,15 @@ import json, os, sys
 sp = os.path.join(sys.argv[1], "settings.json")
 if not os.path.exists(sp): sys.exit(0)
 cfg = json.load(open(sp))
-stop = cfg.get("hooks", {}).get("Stop", [])
-kept = [g for g in stop if "tts-speak.py" not in json.dumps(g)]
-if kept: cfg["hooks"]["Stop"] = kept
-else: cfg.get("hooks", {}).pop("Stop", None)
+h = cfg.get("hooks", {})
+stop = [g for g in h.get("Stop", []) if "tts-speak.py" not in json.dumps(g)]
+if stop: h["Stop"] = stop
+else: h.pop("Stop", None)
+ups = [g for g in h.get("UserPromptSubmit", []) if "tts-replay-hook.py" not in json.dumps(g)]
+if ups: h["UserPromptSubmit"] = ups
+else: h.pop("UserPromptSubmit", None)
 json.dump(cfg, open(sp, "w"), indent=2, ensure_ascii=False)
-print("Removed Stop hook from", sp)
+print("Removed uguis hooks from", sp)
 PY
 
 echo "uguis uninstalled. (edge-tts left installed — 'pipx uninstall edge-tts' to remove.)"
