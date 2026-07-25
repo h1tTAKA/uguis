@@ -48,9 +48,18 @@ def off():
 
 
 def active_transcript():
-    """Most recently modified session transcript = the one in use now."""
-    files = glob.glob(os.path.join(PROJECTS, "*", "*.jsonl"))
-    return max(files, key=os.path.getmtime) if files else None
+    """Most recently modified session transcript = the one in use now.
+    Skip files that vanish between glob and stat (a session file can be removed
+    mid-scan), so the daemon never crashes on the race."""
+    best, best_m = None, -1.0
+    for f in glob.glob(os.path.join(PROJECTS, "*", "*.jsonl")):
+        try:
+            m = os.path.getmtime(f)
+        except OSError:
+            continue
+        if m > best_m:
+            best, best_m = f, m
+    return best
 
 
 def iter_events(path):
