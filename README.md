@@ -57,6 +57,7 @@ Or directly:
 ```bash
 bash ~/.claude/scripts/tts-toggle.sh off       # mute (daemon keeps running)
 bash ~/.claude/scripts/tts-toggle.sh on        # unmute
+bash ~/.claude/scripts/tts-toggle.sh shush     # stop the CURRENT playback only
 bash ~/.claude/scripts/tts-toggle.sh status    # mute state + daemon alive?
 bash ~/.claude/scripts/tts-toggle.sh stop      # stop the daemon
 bash ~/.claude/scripts/tts-toggle.sh start     # start it
@@ -71,13 +72,14 @@ Env vars (set them on the `launchd` plist, or export before `start`):
 | Var | Default | Meaning |
 |---|---|---|
 | `TTS_ENGINE` | `edge` | `say` = offline macOS voice |
-| `TTS_EDGE_VOICE` | `ko-KR-SunHiNeural` | any Edge voice (e.g. `en-US-AvaMultilingualNeural`) |
-| `TTS_EDGE_RATE` | `+100%` | speaking rate (final answer + questions) |
-| `TTS_EDGE_RATE_FAST` | `+100%` | speaking rate for intermediate progress |
+| `TTS_EDGE_VOICE` | `en-US-AvaMultilingualNeural` | any Edge voice (Korean: `ko-KR-SunHiNeural`) |
+| `TTS_EDGE_RATE` | `+70%` | speaking rate (final answer + questions) |
+| `TTS_EDGE_RATE_FAST` | `+70%` | speaking rate for intermediate progress |
 | `TTS_FIRST_CHUNK` | `15` | first-chunk size in chars (smaller = faster first audio) |
 | `TTS_JOIN` | `" "` | clause joiner; `", "` restores pauses between clauses |
 | `TTS_DAEMON_POLL` | `0.1` | transcript poll interval (s) |
 | `TTS_DAEMON_TIMEOUT` | `0.3` | wait (s) before a still-streaming line is treated as final |
+| `TTS_DAEMON_FASTFWD` | `10` | if a batch spans more than this many seconds, jump to the newest segment |
 | `TTS_VOLUME` | `0.6` | afplay gain (1.0 = normal) |
 | `TTS_MAX` | `1000` | max chars per batch (truncates beyond) |
 | `TTS_CODE_MAX` | `3` | clauses with ≥ this many code tokens are dropped |
@@ -97,7 +99,10 @@ the last one spoken:
 - **Rate by lookahead**: text followed by more work = progress (fast); text
   ending the turn = final; `AskUserQuestion` = voiced immediately.
 - **Catch-up**: within a batch, stale progress that has a later segment is
-  dropped, so playback stays near real time.
+  dropped; and if a batch spans more than `TTS_DAEMON_FASTFWD` seconds, only the
+  newest segment is spoken (global fast-forward) — playback never trails a
+  minutes-long backlog. Playback is not auto-cut on a new prompt; say "멈춰"
+  (`shush`) to stop the current playback yourself.
 - **Baseline on start**: a freshly seen transcript is marked as already spoken,
   so the daemon never replays history.
 
