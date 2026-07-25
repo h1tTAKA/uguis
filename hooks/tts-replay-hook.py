@@ -30,6 +30,7 @@ def main():
         open(os.path.join(os.path.expanduser("~"), ".claude", ".tts-replay"), "w").close()
     except Exception:
         return                       # flag write failed -> let the prompt through
+    sys.stderr.write("🔊 다시 재생")   # intentional notice (Claude Code shows this)
     sys.exit(2)                      # block only after the signal is set
 
 
