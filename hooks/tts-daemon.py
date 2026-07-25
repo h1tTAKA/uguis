@@ -169,19 +169,6 @@ def speak_new_events(tp):
     if not last:
         write_state(tp, max(all_events[i].get("timestamp", "") for i in a_idx))
         return
-    # supersede: a real user prompt newer than last-spoken = the user moved on.
-    # Stop any stale playback and skip past the old turn to the newest prompt, so
-    # we speak the current turn, not a queued backlog. (fires once per prompt)
-    prompt_ts = ""
-    for e in all_events:
-        if e.get("type") == "user" and tts._is_user_prompt(e):
-            ts = e.get("timestamp", "")
-            if ts > last and ts > prompt_ts:
-                prompt_ts = ts
-    if prompt_ts:
-        subprocess.run(["pkill", "-x", "afplay"], stderr=_DEVNULL)
-        last = prompt_ts
-        write_state(tp, prompt_ts)
     n = len(all_events)
     # collect this poll's new events (in order) as flat (text, rate) segments
     flat, first_ts, last_ts = [], None, None
