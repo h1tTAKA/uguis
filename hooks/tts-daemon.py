@@ -201,26 +201,18 @@ def speak_new_events(tp):
 
 
 def main():
-    seen_mtime, seen_tp = 0.0, None
+    # No mtime gate: it conflicted with the PENDING_TIMEOUT wait — a final answer
+    # that is the last write leaves mtime frozen, so the gate never re-invoked
+    # speak_new_events and the pending line was never spoken. Tail parse is ~2ms,
+    # so polling every tick is cheap.
     while True:
         if off():
             subprocess.run(["pkill", "-x", "afplay"], stderr=_DEVNULL)
             time.sleep(POLL)
             continue
         tp = active_transcript()
-        if not tp:
-            time.sleep(POLL)
-            continue
-        try:
-            m = os.path.getmtime(tp)
-        except OSError:
-            time.sleep(POLL)
-            continue
-        if tp == seen_tp and m == seen_mtime:
-            time.sleep(POLL)
-            continue
-        seen_tp, seen_mtime = tp, m
-        speak_new_events(tp)
+        if tp:
+            speak_new_events(tp)
         time.sleep(POLL)
 
 
