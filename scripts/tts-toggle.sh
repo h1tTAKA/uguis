@@ -18,6 +18,7 @@ case "$action" in
   on)     rm -f "$FLAG" ;;
   off)    : > "$FLAG" ; pkill -x afplay 2>/dev/null ;;
   toggle) if [ -f "$FLAG" ]; then rm -f "$FLAG"; else : > "$FLAG"; pkill -x afplay 2>/dev/null; fi ;;
+  re|replay) : > "$HOME/.claude/.tts-replay"; echo "다시 읽기 요청됨 (최신 응답 재생)"; exit 0 ;;
   shush)  # stop current playback without muting future: briefly set the mute
           # flag (the only signal speak_edge checks) so the running batch aborts,
           # then auto-restore after 1s. Don't restore if it was already off.
@@ -33,7 +34,7 @@ case "$action" in
   pause)   n="${2//[!0-9]/}"; n="${n:-0}"; setcfg pause "$n"
            echo "쉼 레벨: $n (0=정지없음 1=약간 2=많이)"; exit 0 ;;
   status)  : ;;
-  *)       echo "usage: tts-toggle.sh {on|off|toggle|status|shush|rate <n>|pause <0-2>|start|stop|restart}"; exit 1 ;;
+  *)       echo "usage: tts-toggle.sh {on|off|toggle|status|shush|re|rate <n>|pause <0-2>|start|stop|restart}"; exit 1 ;;
 esac
 
 if [ -f "$FLAG" ]; then echo "TTS 음성 출력: OFF (꺼짐)"; else echo "TTS 음성 출력: ON (켜짐)"; fi

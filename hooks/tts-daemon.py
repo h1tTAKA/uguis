@@ -21,6 +21,7 @@ import time
 HOME = os.path.expanduser("~")
 CLAUDE = os.path.join(HOME, ".claude")
 OFF_FLAG = os.path.join(CLAUDE, ".tts-off")
+REPLAY_FLAG = os.path.join(CLAUDE, ".tts-replay")   # touch -> re-read latest
 PROJECTS = os.path.join(CLAUDE, "projects")
 POLL = float(os.environ.get("TTS_DAEMON_POLL", "0.1"))   # seconds between checks
 # how long a still-streaming final text must be stable before we voice it at
@@ -47,9 +48,18 @@ def off():
 
 
 def active_transcript():
-    """Most recently modified session transcript = the one in use now."""
-    files = glob.glob(os.path.join(PROJECTS, "*", "*.jsonl"))
-    return max(files, key=os.path.getmtime) if files else None
+    """Most recently modified session transcript = the one in use now.
+    Skip files that vanish between glob and stat (a session file can be removed
+    mid-scan), so the daemon never crashes on the race."""
+    best, best_m = None, -1.0
+    for f in glob.glob(os.path.join(PROJECTS, "*", "*.jsonl")):
+        try:
+            m = os.path.getmtime(f)
+        except OSError:
+            continue
+        if m > best_m:
+            best, best_m = f, m
+    return best
 
 
 def iter_events(path):
@@ -158,6 +168,47 @@ def _seconds_between(a, b):
     return (db - da).total_seconds() if da and db else 0.0
 
 
+def _speak_segments(segs, tp):
+    """clean + MAX_CHARS cap + play (edge prefetch pipeline, say fallback).
+    Shared by normal playback and replay."""
+    cleaned, total = [], 0
+    for txt, rate in segs:
+        s = tts.clean(txt)
+        if not s:
+            continue
+        if total + len(s) > tts.MAX_CHARS:
+            s = s[:max(0, tts.MAX_CHARS - total - 4)]
+            s = (s.rsplit(" ", 1)[0] if " " in s else s) + " ..."
+        cleaned.append((s, rate))
+        total += len(s)
+        if total >= tts.MAX_CHARS:
+            break
+    if not cleaned or off():
+        return
+    # ts="~" (> any ISO-8601 ts lexically) so speak_edge.superseded() ignores the
+    # legacy .tts-last state and only aborts on off(); passing "" made a stale
+    # .tts-last mark every chunk superseded -> no edge playback -> say fallback.
+    if not tts.speak_edge(cleaned, tp, "~"):             # edge pipeline
+        for s, rate in cleaned:                          # offline say fallback
+            if off():
+                break
+            subprocess.run(["say", "-v", tts.VOICE, "-r", tts.RATE, s],
+                           stdout=_DEVNULL, stderr=_DEVNULL)
+
+
+def replay_latest(tp):
+    """Re-speak the most recent turn's final answer / question (skip progress).
+    Independent of state, so it never disturbs normal dedup."""
+    all_events = list(iter_events(tp))
+    a_idx = [i for i, e in enumerate(all_events) if e.get("type") == "assistant"]
+    for i in reversed(a_idx):
+        finals = [(t, r) for (t, r, k) in _event_segments(all_events[i], all_events, i)
+                  if k in ("final", "question")]
+        if finals:
+            _speak_segments(finals, tp)
+            return
+
+
 def speak_new_events(tp):
     """Speak assistant events newer than last-spoken, in order, classifying
     rate by lookahead. Baselines a freshly seen transcript (no history flood)."""
@@ -201,28 +252,7 @@ def speak_new_events(tp):
     # instead of trailing a backlog. (keyed on kind, not rate)
     plan = [(t, r) for k, (t, r, kind) in enumerate(flat)
             if not (kind == "progress" and k < len(flat) - 1)]
-    # clean + cap, then hand to the prefetch pipeline (synthesize next chunk
-    # while the current one plays -> no gaps between chunks).
-    cleaned, total = [], 0
-    for txt, rate in plan:
-        s = tts.clean(txt)
-        if not s:
-            continue
-        if total + len(s) > tts.MAX_CHARS:
-            s = s[:max(0, tts.MAX_CHARS - total - 4)]
-            s = (s.rsplit(" ", 1)[0] if " " in s else s) + " ..."
-        cleaned.append((s, rate))
-        total += len(s)
-        if total >= tts.MAX_CHARS:
-            break
-    if not cleaned or off():
-        return
-    if not tts.speak_edge(cleaned, tp, last_ts or ""):   # edge pipeline
-        for s, rate in cleaned:                          # offline say fallback
-            if off():
-                break
-            subprocess.run(["say", "-v", tts.VOICE, "-r", tts.RATE, s],
-                           stdout=_DEVNULL, stderr=_DEVNULL)
+    _speak_segments(plan, tp)
     if last_ts:
         write_state(tp, last_ts)
 
@@ -233,12 +263,22 @@ def main():
     # speak_new_events and the pending line was never spoken. Tail parse is ~2ms,
     # so polling every tick is cheap.
     while True:
+        # consume the one-shot replay flag first, even when muted, so a request
+        # made while off is dropped (not fired later on unmute).
+        replay_requested = os.path.exists(REPLAY_FLAG)
+        if replay_requested:
+            try:
+                os.remove(REPLAY_FLAG)
+            except OSError:
+                pass
         if off():
             subprocess.run(["pkill", "-x", "afplay"], stderr=_DEVNULL)
             time.sleep(POLL)
             continue
         tp = active_transcript()
         if tp:
+            if replay_requested:
+                replay_latest(tp)
             speak_new_events(tp)
         time.sleep(POLL)
 
