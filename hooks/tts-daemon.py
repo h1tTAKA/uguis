@@ -185,7 +185,10 @@ def _speak_segments(segs, tp):
             break
     if not cleaned or off():
         return
-    if not tts.speak_edge(cleaned, tp, ""):              # edge pipeline
+    # ts="~" (> any ISO-8601 ts lexically) so speak_edge.superseded() ignores the
+    # legacy .tts-last state and only aborts on off(); passing "" made a stale
+    # .tts-last mark every chunk superseded -> no edge playback -> say fallback.
+    if not tts.speak_edge(cleaned, tp, "~"):             # edge pipeline
         for s, rate in cleaned:                          # offline say fallback
             if off():
                 break
