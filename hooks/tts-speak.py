@@ -33,7 +33,7 @@ EDGE_RATE_FAST = os.environ.get("TTS_EDGE_RATE_FAST", "+70%")
 VOLUME = os.environ.get("TTS_VOLUME", "0.6")   # afplay gain: 1.0 = normal
 VOICE = os.environ.get("TTS_VOICE", "Yuna")   # say fallback voice
 RATE = os.environ.get("TTS_RATE", "210")       # say fallback rate (wpm)
-MAX_CHARS = int(os.environ.get("TTS_MAX", "1000"))
+MAX_CHARS = int(os.environ.get("TTS_MAX", "100000"))   # effectively no cap; set lower to truncate
 # clauses with >= this many code tokens are dropped from speech entirely
 CODE_MAX = int(os.environ.get("TTS_CODE_MAX", "3"))
 POLL_TRIES = 40      # 40 * 0.15s = ~6s max wait for flush
