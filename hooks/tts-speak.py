@@ -27,9 +27,9 @@ OFF_FLAG = os.path.join(HOME, ".claude", ".tts-off")
 # engine: "edge" (Microsoft neural, natural, needs net) or "say" (macOS offline)
 ENGINE = os.environ.get("TTS_ENGINE", "edge")
 EDGE_VOICE = os.environ.get("TTS_EDGE_VOICE", "en-US-AvaMultilingualNeural")
-EDGE_RATE = os.environ.get("TTS_EDGE_RATE", "+70%")
+EDGE_RATE = os.environ.get("TTS_EDGE_RATE", "+60%")
 # faster rate for intermediate progress narration (non-final, non-question)
-EDGE_RATE_FAST = os.environ.get("TTS_EDGE_RATE_FAST", "+70%")
+EDGE_RATE_FAST = os.environ.get("TTS_EDGE_RATE_FAST", "+60%")
 VOLUME = os.environ.get("TTS_VOLUME", "0.6")   # afplay gain: 1.0 = normal
 VOICE = os.environ.get("TTS_VOICE", "Yuna")   # say fallback voice
 RATE = os.environ.get("TTS_RATE", "210")       # say fallback rate (wpm)
